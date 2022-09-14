@@ -1,15 +1,17 @@
 use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder, Result};
-use serde::Deserialize;
+use std::sync::Mutex;
 
-#[derive(Deserialize)]
-struct Update {
-    id: i64,
-    status: String,
+use zoidberg_lib::types::Update;
+
+struct State {
+    counter: Mutex<i32>,
 }
 
 #[get("/register")]
-async fn register() -> impl Responder {
-    HttpResponse::Ok().body("Worker node registered")
+async fn register(data: web::Data<State>) -> impl Responder {
+    let mut counter = data.counter.lock().unwrap();
+    *counter += 1;
+    HttpResponse::Ok().body(format!("Worker node {} registered", *counter))
 }
 
 #[get("/fetch")]
@@ -29,8 +31,13 @@ async fn index() -> impl Responder {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    HttpServer::new(|| {
+    let counter = web::Data::new(State {
+        counter: Mutex::new(0),
+    });
+
+    HttpServer::new(move || {
         App::new()
+            .app_data(counter.clone())
             .service(register)
             .service(fetch)
             .service(update)
