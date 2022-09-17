@@ -9,3 +9,8 @@ steps:
       - curl https://sh.rustup.rs -sSf | bash -s -- -y
       - export PATH="/root/.cargo/bin:$${PATH}"
       - pre-commit run --all-files
+  - name: test
+    image: rust:1.30
+    commands:
+    - cargo build --verbose --all
+    - cargo test --verbose --all
