@@ -60,9 +60,7 @@ async fn status(
     let running_jobs = data.running_jobs.lock().unwrap();
     let status_updates: Vec<Job> = running_jobs
         .iter()
-        .filter(|r| {
-            s.iter().filter(|i| i.id == r.id).count() > 0
-        })
+        .filter(|r| s.iter().filter(|i| i.id == r.id).count() > 0)
         .cloned()
         .collect();
 
@@ -225,22 +223,22 @@ mod tests {
                     counter: Mutex::new(0),
                     jobcounter: Mutex::new(0),
                     workers: Mutex::new(Vec::new()),
-                    jobs: Mutex::new(vec![Job {
-                        id: 0,
+                    jobs: Mutex::new(Vec::new()),
+                    running_jobs: Mutex::new(vec![Job {
+                        id: 1,
                         cmd: cmd.clone(),
                         status: Status::Running,
                     }]),
-                    running_jobs: Mutex::new(Vec::new()),
                 }))
                 .service(status),
         )
         .await;
         let req = test::TestRequest::post()
-            .set_json(vec![StatusRequest { id: 0 }])
+            .set_json(vec![StatusRequest { id: 1 }])
             .uri("/status")
             .to_request();
         let resp: Vec<Job> = test::call_and_read_body_json(&app, req).await;
-        assert_eq!(resp[0].id, 0);
+        assert_eq!(resp[0].id, 1);
     }
 
     #[actix_web::test]
