@@ -10,4 +10,11 @@ path = "../zoidberg_lib"
 version = "0.1.0"
 
 [dependencies]
-reqwest = { version = "0.11", features = ["blocking", "json"] }
+# reqwest = { version = "0.11", features = ["blocking", "json"] }
+reqwest = { version = "0.11"}
+serde_json = "1.0.85"
+retry = "2.0.0"
+reqwest-retry = "0.1.5"
+reqwest-middleware = "0.1.6"
+tokio = { version = "1", features = ["full"] }
+clap = "3.2.22"

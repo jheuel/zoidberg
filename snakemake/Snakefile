@@ -1,0 +1,12 @@
+rule collect:
+    input:
+        [f"{i}.txt" for i in range(100)],
+    run:
+        shell("rm {input}")
+
+
+rule create:
+    output:
+        "{i}.txt",
+    run:
+        shell("touch {output}")
