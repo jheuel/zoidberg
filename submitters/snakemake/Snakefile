@@ -1,4 +1,4 @@
-rule collect:
+rule collect_and_delete:
     input:
         [f"{i}.txt" for i in range(100)],
     run:
