@@ -1,0 +1,14 @@
+executable   = run.sh
+#arguments    = SomeArgument
+
+output       = output/stdout.$(Process)
+error        = output/stderr.$(Process)
+log          = output/log.$(Process)
+
+request_cpus   = 1
+#request_memory = 1024
+#request_disk   = 10240
+
+should_transfer_files = no
+
+queue 150
