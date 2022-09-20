@@ -5,7 +5,7 @@ use std::process::Command;
 use std::time::Duration;
 use std::{thread, time};
 
-use zoidberg_lib::types::{Job, RegisterResponse, Status, Update};
+use zoidberg_lib::types::{FetchResponse, Job, RegisterResponse, Status, Update};
 
 fn build_client(secret: &str) -> Client {
     let cookie = format!("secret={}", secret);
@@ -64,14 +64,14 @@ impl Worker {
         Ok(())
     }
 
-    async fn fetch(self: &Self) -> Result<Vec<Job>, Box<dyn Error>> {
+    async fn fetch(self: &Self) -> Result<FetchResponse, Box<dyn Error>> {
         let res = build_client("some_secret")
             .get("http://localhost:8080/fetch")
             .send()
             .await?;
         let body = res.text().await?;
-        let jobs: Vec<Job> = serde_json::from_str(&body)?;
-        Ok(jobs)
+        let resp: FetchResponse = serde_json::from_str(&body)?;
+        Ok(resp)
     }
 
     async fn run(self: &Self, job: &Job) -> Result<(), Box<dyn Error>> {
@@ -86,6 +86,22 @@ impl Worker {
         match output.status.success() {
             true => Ok(()),
             false => Err(Box::from("Job failed")),
+        }
+    }
+
+    async fn process(self: &Self, jobs: &[Job]) {
+        for job in jobs {
+            let status = match self.run(&job).await {
+                Ok(()) => Status::Completed,
+                Err(..) => Status::Failed,
+            };
+            let n = &[Job {
+                status,
+                ..job.clone()
+            }];
+            if let Err(error) = self.update(n).await {
+                println!("Could not update job: {}", error);
+            }
         }
     }
 }
@@ -108,31 +124,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let client = Worker::new(server).await.expect("Could not create client");
 
-    let pause = time::Duration::from_secs(0);
-    let long_pause = time::Duration::from_secs(2);
-    let extra_long_pause = time::Duration::from_secs(4);
+    let pause = time::Duration::from_secs(1);
+    let long_pause = time::Duration::from_secs(20);
 
     loop {
-        if let Ok(jobs) = client.fetch().await {
-            // if there are no jobs, wait a little longer
-            if jobs.len() == 0 {
-                thread::sleep(long_pause);
-            }
-
-            for job in jobs {
-                let status = match client.run(&job).await {
-                    Ok(()) => Status::Completed,
-                    Err(..) => Status::Failed,
-                };
-                let n = &[Job { status, ..job }];
-                if let Err(error) = client.update(n).await {
-                    println!("Could not update job: {}", error);
-                }
+        if let Ok(fetch) = client.fetch().await {
+            match fetch {
+                FetchResponse::Nop => thread::sleep(pause),
+                FetchResponse::StopWorking => break,
+                FetchResponse::Jobs(jobs) => client.process(&jobs).await,
             }
         } else {
-            // wait a little longer whenever job fetching fails
-            thread::sleep(extra_long_pause);
+            thread::sleep(long_pause);
         }
-        thread::sleep(pause);
     }
+    Ok(())
 }

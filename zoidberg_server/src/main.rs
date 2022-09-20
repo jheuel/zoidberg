@@ -2,7 +2,7 @@ use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder, Result
 use clap;
 use std::sync::Mutex;
 
-use zoidberg_lib::types::{Job, RegisterResponse, StatusRequest, Update};
+use zoidberg_lib::types::{FetchResponse, Job, RegisterResponse, StatusRequest, Update};
 
 struct State {
     counter: Mutex<i32>,
@@ -40,7 +40,7 @@ async fn index(data: web::Data<State>) -> impl Responder {
             .join("\n")
         + "</tbody></table>";
 
-    let debug_html = r#"<style>
+    let _debug_html = r#"<style>
       *:not(path):not(g) {{
         color:                    hsla(210, 100%, 100%, 0.9) !important;
         background:               hsla(210, 100%,  50%, 0.5) !important;
@@ -49,7 +49,7 @@ async fn index(data: web::Data<State>) -> impl Responder {
         box-shadow: none !important;
       }}
     </style>"#;
-    let debug_html = "";
+    let _debug_html = "";
 
     let page = format!(
         r#"
@@ -88,7 +88,7 @@ async fn index(data: web::Data<State>) -> impl Responder {
   </body>
 </html>
 "#,
-        debug_html, jobs_html, workers_html
+        _debug_html, jobs_html, workers_html
     );
     HttpResponse::Ok().body(page)
 }
@@ -109,9 +109,9 @@ async fn register(data: web::Data<State>) -> Result<impl Responder> {
 async fn fetch(data: web::Data<State>) -> Result<impl Responder> {
     let mut jobs = data.jobs.lock().unwrap();
     if let Some(j) = jobs.pop() {
-        return Ok(web::Json(vec![j]));
+        return Ok(web::Json(FetchResponse::Jobs(vec![j])));
     }
-    Ok(web::Json(Vec::new()))
+    Ok(web::Json(FetchResponse::Nop))
 }
 
 #[post("/status")]
@@ -267,13 +267,19 @@ mod tests {
         )
         .await;
         let req = test::TestRequest::get().uri("/fetch").to_request();
-        let resp: Vec<Job> = test::call_and_read_body_json(&app, req).await;
-        assert_eq!(resp[0].id, 0);
-        assert_eq!(resp[0].cmd, cmd);
-
-        let req = test::TestRequest::get().uri("/fetch").to_request();
-        let resp: Vec<Job> = test::call_and_read_body_json(&app, req).await;
-        assert_eq!(resp.len(), 0);
+        let resp: FetchResponse = test::call_and_read_body_json(&app, req).await;
+        match resp {
+            FetchResponse::Nop => {
+                panic!("did not expect FetchResponse::Nop")
+            }
+            FetchResponse::StopWorking => {
+                panic!("did not expect FetchResponse::NotWorking")
+            }
+            FetchResponse::Jobs(jobs) => {
+                assert_eq!(jobs[0].id, 0);
+                assert_eq!(jobs[0].cmd, cmd);
+            }
+        }
     }
 
     #[actix_web::test]

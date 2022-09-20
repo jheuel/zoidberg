@@ -39,6 +39,13 @@ pub struct StatusRequest {
     pub id: i32,
 }
 
+#[derive(Serialize, Deserialize)]
+pub enum FetchResponse {
+    Jobs(Vec<Job>),
+    StopWorking,
+    Nop,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Job {
     #[serde(default)]
