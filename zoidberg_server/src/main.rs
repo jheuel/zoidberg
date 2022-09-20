@@ -1,6 +1,11 @@
-use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder, Result};
+use actix_web::error::ErrorBadRequest;
+use actix_web::{
+    dev, get, middleware::Logger, post, web, App, Error, FromRequest, HttpRequest, HttpResponse,
+    HttpServer, Responder, Result,
+};
 use clap;
 use env_logger::Env;
+use futures::future::{err, ok, Ready};
 use log;
 use std::sync::Mutex;
 use zoidberg_lib::types::{FetchResponse, Job, RegisterResponse, StatusRequest, Update, Worker};
@@ -17,6 +22,41 @@ struct State {
     jobs: Mutex<Vec<Job>>,
 }
 
+impl State {
+    fn new() -> Self {
+        Self {
+            counter_workers: Mutex::new(0),
+            counter_jobs: Mutex::new(0),
+            workers: Mutex::new(Vec::new()),
+            new_jobs: Mutex::new(Vec::new()),
+            jobs: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+struct Authorization {}
+
+impl FromRequest for Authorization {
+    type Error = Error;
+    type Future = Ready<Result<Self, Self::Error>>;
+
+    fn from_request(req: &HttpRequest, _payload: &mut dev::Payload) -> Self::Future {
+        if let Some(head) = req.headers().get("cookie") {
+            if let Ok(cookie) = head.to_str() {
+                if let Some(secret) = req.app_data::<String>() {
+                    println!("{} == {}", secret, cookie);
+                    if secret == cookie {
+                        return ok(Authorization {});
+                    } else {
+                        return err(ErrorBadRequest("no auth"));
+                    }
+                }
+            }
+        }
+        err(ErrorBadRequest("no auth"))
+    }
+}
+
 #[get("/")]
 async fn index(data: web::Data<State>) -> impl Responder {
     let workers = data.workers.lock().unwrap();
@@ -26,7 +66,7 @@ async fn index(data: web::Data<State>) -> impl Responder {
 }
 
 #[get("/register")]
-async fn register(data: web::Data<State>) -> Result<impl Responder> {
+async fn register(data: web::Data<State>, _: Authorization) -> Result<impl Responder> {
     let mut counter_workers = data.counter_workers.lock().unwrap();
     *counter_workers += 1;
 
@@ -42,7 +82,7 @@ async fn register(data: web::Data<State>) -> Result<impl Responder> {
 }
 
 #[get("/fetch")]
-async fn fetch(data: web::Data<State>) -> Result<impl Responder> {
+async fn fetch(data: web::Data<State>, _: Authorization) -> Result<impl Responder> {
     let mut new_jobs = data.new_jobs.lock().unwrap();
     if let Some(j) = new_jobs.pop() {
         return Ok(web::Json(FetchResponse::Jobs(vec![j])));
@@ -54,6 +94,7 @@ async fn fetch(data: web::Data<State>) -> Result<impl Responder> {
 async fn status(
     s: web::Json<Vec<StatusRequest>>,
     data: web::Data<State>,
+    _: Authorization,
 ) -> Result<impl Responder> {
     let jobs = data.jobs.lock().unwrap();
     let status_updates: Vec<Job> = jobs
@@ -66,7 +107,11 @@ async fn status(
 }
 
 #[post("/update")]
-async fn update(updates: web::Json<Vec<Update>>, data: web::Data<State>) -> Result<String> {
+async fn update(
+    updates: web::Json<Vec<Update>>,
+    data: web::Data<State>,
+    _: Authorization,
+) -> Result<String> {
     let mut jobs = data.jobs.lock().unwrap();
     let mut n = 0;
     for update in updates.iter() {
@@ -87,7 +132,11 @@ async fn update(updates: web::Json<Vec<Update>>, data: web::Data<State>) -> Resu
 }
 
 #[post("/submit")]
-async fn submit(data: web::Data<State>, js: web::Json<Vec<Job>>) -> Result<impl Responder> {
+async fn submit(
+    data: web::Data<State>,
+    js: web::Json<Vec<Job>>,
+    _: Authorization,
+) -> Result<impl Responder> {
     let mut new_jobs = data.new_jobs.lock().unwrap();
     let mut jobs = data.jobs.lock().unwrap();
     let mut counter_jobs = data.counter_jobs.lock().unwrap();
@@ -113,21 +162,20 @@ async fn submit(data: web::Data<State>, js: web::Json<Vec<Job>>) -> Result<impl 
 async fn main() -> std::io::Result<()> {
     env_logger::Builder::from_env(Env::default().default_filter_or("zoidberg_server=info")).init();
 
+    let secret = std::env::var("ZOIDBERG_SECRET")
+        .expect("Please set the $ZOIDBERG_SECRET environment variable");
+
     let _matches = clap::App::new("Zoidberg server")
         .version(VERSION)
         .author("Johannes Heuel")
         .get_matches();
 
-    let state = web::Data::new(State {
-        counter_workers: Mutex::new(0),
-        counter_jobs: Mutex::new(0),
-        workers: Mutex::new(Vec::new()),
-        new_jobs: Mutex::new(Vec::new()),
-        jobs: Mutex::new(Vec::new()),
-    });
+    let state = web::Data::new(State::new());
 
     HttpServer::new(move || {
         App::new()
+            .wrap(Logger::default())
+            .app_data(secret.clone())
             .app_data(state.clone())
             .service(index)
             .service(register)
@@ -151,13 +199,7 @@ mod tests {
     async fn test_index() {
         let app = test::init_service(
             App::new()
-                .app_data(web::Data::new(State {
-                    counter_workers: Mutex::new(0),
-                    counter_jobs: Mutex::new(0),
-                    workers: Mutex::new(Vec::new()),
-                    new_jobs: Mutex::new(Vec::new()),
-                    jobs: Mutex::new(Vec::new()),
-                }))
+                .app_data(web::Data::new(State::new()))
                 .service(index),
         )
         .await;
@@ -170,17 +212,15 @@ mod tests {
     async fn test_register() {
         let app = test::init_service(
             App::new()
-                .app_data(web::Data::new(State {
-                    counter_workers: Mutex::new(0),
-                    counter_jobs: Mutex::new(0),
-                    workers: Mutex::new(Vec::new()),
-                    new_jobs: Mutex::new(Vec::new()),
-                    jobs: Mutex::new(Vec::new()),
-                }))
+                .app_data(String::from("secret"))
+                .app_data(web::Data::new(State::new()))
                 .service(register),
         )
         .await;
-        let req = test::TestRequest::get().uri("/register").to_request();
+        let req = test::TestRequest::get()
+            .append_header(("cookie", "secret"))
+            .uri("/register")
+            .to_request();
         let resp: RegisterResponse = test::call_and_read_body_json(&app, req).await;
         assert_eq!(resp.id, 1);
     }
@@ -190,6 +230,7 @@ mod tests {
         let cmd = String::from("hi");
         let app = test::init_service(
             App::new()
+                .app_data(String::from("secret"))
                 .app_data(web::Data::new(State {
                     counter_workers: Mutex::new(0),
                     counter_jobs: Mutex::new(0),
@@ -204,7 +245,10 @@ mod tests {
                 .service(fetch),
         )
         .await;
-        let req = test::TestRequest::get().uri("/fetch").to_request();
+        let req = test::TestRequest::get()
+            .append_header(("cookie", "secret"))
+            .uri("/fetch")
+            .to_request();
         let resp: FetchResponse = test::call_and_read_body_json(&app, req).await;
         match resp {
             FetchResponse::Nop => {
@@ -225,6 +269,7 @@ mod tests {
         let cmd = String::from("hi");
         let app = test::init_service(
             App::new()
+                .app_data(String::from("secret"))
                 .app_data(web::Data::new(State {
                     counter_workers: Mutex::new(0),
                     counter_jobs: Mutex::new(0),
@@ -240,6 +285,7 @@ mod tests {
         )
         .await;
         let req = test::TestRequest::post()
+            .append_header(("cookie", "secret"))
             .set_json(vec![StatusRequest { id: 1 }])
             .uri("/status")
             .to_request();
@@ -251,17 +297,13 @@ mod tests {
     async fn test_update() {
         let app = test::init_service(
             App::new()
-                .app_data(web::Data::new(State {
-                    counter_workers: Mutex::new(0),
-                    counter_jobs: Mutex::new(0),
-                    workers: Mutex::new(Vec::new()),
-                    new_jobs: Mutex::new(Vec::new()),
-                    jobs: Mutex::new(Vec::new()),
-                }))
+                .app_data(String::from("secret"))
+                .app_data(web::Data::new(State::new()))
                 .service(update),
         )
         .await;
         let req = test::TestRequest::post()
+            .append_header(("cookie", "secret"))
             .set_json(vec![Update {
                 worker: 0,
                 job: 0,
@@ -277,17 +319,13 @@ mod tests {
     async fn test_submit() {
         let app = test::init_service(
             App::new()
-                .app_data(web::Data::new(State {
-                    counter_workers: Mutex::new(0),
-                    counter_jobs: Mutex::new(0),
-                    workers: Mutex::new(Vec::new()),
-                    new_jobs: Mutex::new(Vec::new()),
-                    jobs: Mutex::new(Vec::new()),
-                }))
+                .app_data(String::from("secret"))
+                .app_data(web::Data::new(State::new()))
                 .service(submit),
         )
         .await;
         let req = test::TestRequest::post()
+            .append_header(("cookie", "secret"))
             .set_json(vec![Job {
                 id: 0,
                 cmd: String::from("hi"),
