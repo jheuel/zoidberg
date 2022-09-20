@@ -129,8 +129,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         )
         .get_matches();
     let server = matches.value_of("server").unwrap();
-    let secret = std::env::var("ZOIDBERG_SECRET")
-        .expect("Please set the $ZOIDBERG_SECRET environment variable");
+    let secret = std::env::var("ZOIDBERG_SECRET").unwrap_or_else(|_| {
+        println!("Please set the $ZOIDBERG_SECRET environment variable");
+        std::process::exit(1);
+    });
 
     let client = Worker::new(server, &secret)
         .await

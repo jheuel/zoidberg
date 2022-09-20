@@ -162,8 +162,10 @@ async fn submit(
 async fn main() -> std::io::Result<()> {
     env_logger::Builder::from_env(Env::default().default_filter_or("zoidberg_server=info")).init();
 
-    let secret = std::env::var("ZOIDBERG_SECRET")
-        .expect("Please set the $ZOIDBERG_SECRET environment variable");
+    let secret = std::env::var("ZOIDBERG_SECRET").unwrap_or_else(|_| {
+        println!("Please set the $ZOIDBERG_SECRET environment variable");
+        std::process::exit(1);
+    });
 
     let _matches = clap::App::new("Zoidberg server")
         .version(VERSION)
