@@ -1,4 +1,6 @@
 use clap::{App, Arg};
+use env_logger::Env;
+use log;
 use reqwest::{header, Client, ClientBuilder};
 use std::error::Error;
 use std::process::Command;
@@ -6,6 +8,8 @@ use std::time::Duration;
 use std::{thread, time};
 
 use zoidberg_lib::types::{FetchResponse, Job, RegisterResponse, Status, Update};
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn build_client(secret: &str) -> Client {
     let cookie = format!("secret={}", secret);
@@ -38,7 +42,7 @@ impl Worker {
 
         let body = res.text().await?;
         let r: RegisterResponse = serde_json::from_str(&body)?;
-        println!("registered worker with id: {}", &r.id);
+        log::info!("registered worker with id: {}", &r.id);
         Ok(Worker { id: r.id })
     }
 
@@ -60,7 +64,7 @@ impl Worker {
             .text()
             .await?;
 
-        println!("Body:\n{}", body);
+        log::info!("Body: {}", body);
         Ok(())
     }
 
@@ -77,7 +81,7 @@ impl Worker {
     async fn run(self: &Self, job: &Job) -> Result<(), Box<dyn Error>> {
         let output = Command::new("bash").arg("-c").arg(&job.cmd).output()?;
 
-        println!(
+        log::info!(
             "command: {}\nstdout: {}\nstderr: {}",
             &job.cmd,
             String::from_utf8_lossy(&output.stdout),
@@ -100,7 +104,7 @@ impl Worker {
                 ..job.clone()
             }];
             if let Err(error) = self.update(n).await {
-                println!("Could not update job: {}", error);
+                log::info!("Could not update job: {}", error);
             }
         }
     }
@@ -108,7 +112,7 @@ impl Worker {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    const VERSION: &str = env!("CARGO_PKG_VERSION");
+    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
     let matches = App::new("Zoidberg client")
         .version(VERSION)

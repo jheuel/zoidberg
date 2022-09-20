@@ -1,114 +1,50 @@
 use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder, Result};
 use clap;
+use env_logger::Env;
+use log;
 use std::sync::Mutex;
+use zoidberg_lib::types::{FetchResponse, Job, RegisterResponse, StatusRequest, Update, Worker};
 
-use zoidberg_lib::types::{FetchResponse, Job, RegisterResponse, StatusRequest, Update};
+mod webpage;
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 struct State {
-    counter: Mutex<i32>,
-    jobcounter: Mutex<i32>,
-    workers: Mutex<Vec<i32>>,
+    counter_workers: Mutex<i32>,
+    counter_jobs: Mutex<i32>,
+    workers: Mutex<Vec<Worker>>,
+    new_jobs: Mutex<Vec<Job>>,
     jobs: Mutex<Vec<Job>>,
-    running_jobs: Mutex<Vec<Job>>,
 }
 
 #[get("/")]
 async fn index(data: web::Data<State>) -> impl Responder {
     let workers = data.workers.lock().unwrap();
-    let jobs = data.running_jobs.lock().unwrap();
-
-    let jobs_html: String = String::from("<table class=\"table is-hoverable\">")
-        + "<thead><tr><th><td>ID</td><td>command</td><td>status</td></th></tr></thead><tbody>"
-        + &jobs
-            .iter()
-            .map(|j| {
-                format!(
-                    "<tr><th></th><td>{}</td><td>{}</td><td>{}</td></tr>",
-                    j.id, j.cmd, j.status
-                )
-            })
-            .collect::<Vec<String>>()
-            .join("\n")
-        + "</tbody></table>";
-
-    let workers_html: String = String::from("<table class=\"table is-hoverable\">")
-        + "<thead><tr><th><td>ID</td></th></tr></thead><tbody>"
-        + &workers
-            .iter()
-            .map(|w| format!("<tr><th></th><td>{}</td></tr>", w))
-            .collect::<Vec<String>>()
-            .join("\n")
-        + "</tbody></table>";
-
-    let _debug_html = r#"<style>
-      *:not(path):not(g) {{
-        color:                    hsla(210, 100%, 100%, 0.9) !important;
-        background:               hsla(210, 100%,  50%, 0.5) !important;
-        outline:    solid 0.25rem hsla(210, 100%, 100%, 0.5) !important;
-
-        box-shadow: none !important;
-      }}
-    </style>"#;
-    let _debug_html = "";
-
-    let page = format!(
-        r#"
-<!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Hello Bulma!</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
-    {}
-  </head>
-  <body>
-  <section class="section">
-    <div class="container">
-      <div class="columns">
-        <div class="column">
-          <div class="block">
-            <h1 class="title">
-              Jobs
-            </h1>
-            {}
-          </div>
-        </div>
-        <div class="column">
-          <div class="block">
-            <h1 class="title">
-              Workers
-            </h1>
-            {}
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-  </body>
-</html>
-"#,
-        _debug_html, jobs_html, workers_html
-    );
+    let new_jobs = data.new_jobs.lock().unwrap();
+    let page = webpage::render(&*new_jobs, &*workers);
     HttpResponse::Ok().body(page)
 }
 
 #[get("/register")]
 async fn register(data: web::Data<State>) -> Result<impl Responder> {
-    let mut counter = data.counter.lock().unwrap();
-    *counter += 1;
+    let mut counter_workers = data.counter_workers.lock().unwrap();
+    *counter_workers += 1;
 
     let mut workers = data.workers.lock().unwrap();
-    workers.push(*counter);
+    workers.push(Worker {
+        id: *counter_workers,
+    });
 
-    println!("Registered worker node with id: {}", *counter);
-    Ok(web::Json(RegisterResponse { id: *counter }))
+    log::info!("Registered worker node with id: {}", *counter_workers);
+    Ok(web::Json(RegisterResponse {
+        id: *counter_workers,
+    }))
 }
 
 #[get("/fetch")]
 async fn fetch(data: web::Data<State>) -> Result<impl Responder> {
-    let mut jobs = data.jobs.lock().unwrap();
-    if let Some(j) = jobs.pop() {
+    let mut new_jobs = data.new_jobs.lock().unwrap();
+    if let Some(j) = new_jobs.pop() {
         return Ok(web::Json(FetchResponse::Jobs(vec![j])));
     }
     Ok(web::Json(FetchResponse::Nop))
@@ -119,8 +55,8 @@ async fn status(
     s: web::Json<Vec<StatusRequest>>,
     data: web::Data<State>,
 ) -> Result<impl Responder> {
-    let running_jobs = data.running_jobs.lock().unwrap();
-    let status_updates: Vec<Job> = running_jobs
+    let jobs = data.jobs.lock().unwrap();
+    let status_updates: Vec<Job> = jobs
         .iter()
         .filter(|r| s.iter().filter(|i| i.id == r.id).count() > 0)
         .cloned()
@@ -131,16 +67,18 @@ async fn status(
 
 #[post("/update")]
 async fn update(updates: web::Json<Vec<Update>>, data: web::Data<State>) -> Result<String> {
-    let mut running_jobs = data.running_jobs.lock().unwrap();
+    let mut jobs = data.jobs.lock().unwrap();
     let mut n = 0;
     for update in updates.iter() {
-        println!(
+        log::info!(
             "Worker {} updated job {} with status {}",
-            update.worker, update.job, update.status
+            update.worker,
+            update.job,
+            update.status
         );
-        for i in 0..running_jobs.len() {
-            if running_jobs[i].id == update.job {
-                running_jobs[i].status = update.status.clone();
+        for i in 0..jobs.len() {
+            if jobs[i].id == update.job {
+                jobs[i].status = update.status.clone();
             }
         }
         n += 1;
@@ -150,30 +88,30 @@ async fn update(updates: web::Json<Vec<Update>>, data: web::Data<State>) -> Resu
 
 #[post("/submit")]
 async fn submit(data: web::Data<State>, js: web::Json<Vec<Job>>) -> Result<impl Responder> {
+    let mut new_jobs = data.new_jobs.lock().unwrap();
     let mut jobs = data.jobs.lock().unwrap();
-    let mut running_jobs = data.running_jobs.lock().unwrap();
-    let mut jobcounter = data.jobcounter.lock().unwrap();
-    let mut new_jobs = Vec::new();
+    let mut counter_jobs = data.counter_jobs.lock().unwrap();
+    let mut new_new_jobs = Vec::new();
     for j in js.into_inner() {
-        *jobcounter += 1;
+        *counter_jobs += 1;
         let cmd = j.cmd.clone();
-        println!("Job submitted with id: {}, cmd: {}", *jobcounter, cmd);
+        log::info!("Job submitted with id: {}, cmd: {}", *counter_jobs, cmd);
 
-        new_jobs.push(Job {
-            id: *jobcounter,
+        new_new_jobs.push(Job {
+            id: *counter_jobs,
             ..j
         });
     }
-    for job in new_jobs.iter() {
+    for job in new_new_jobs.iter() {
+        new_jobs.push(job.clone());
         jobs.push(job.clone());
-        running_jobs.push(job.clone());
     }
-    Ok(web::Json(new_jobs))
+    Ok(web::Json(new_new_jobs))
 }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    const VERSION: &str = env!("CARGO_PKG_VERSION");
+    env_logger::Builder::from_env(Env::default().default_filter_or("zoidberg_server=info")).init();
 
     let _matches = clap::App::new("Zoidberg server")
         .version(VERSION)
@@ -181,11 +119,11 @@ async fn main() -> std::io::Result<()> {
         .get_matches();
 
     let state = web::Data::new(State {
-        counter: Mutex::new(0),
-        jobcounter: Mutex::new(0),
+        counter_workers: Mutex::new(0),
+        counter_jobs: Mutex::new(0),
         workers: Mutex::new(Vec::new()),
+        new_jobs: Mutex::new(Vec::new()),
         jobs: Mutex::new(Vec::new()),
-        running_jobs: Mutex::new(Vec::new()),
     });
 
     HttpServer::new(move || {
@@ -214,11 +152,11 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(State {
-                    counter: Mutex::new(0),
-                    jobcounter: Mutex::new(0),
+                    counter_workers: Mutex::new(0),
+                    counter_jobs: Mutex::new(0),
                     workers: Mutex::new(Vec::new()),
+                    new_jobs: Mutex::new(Vec::new()),
                     jobs: Mutex::new(Vec::new()),
-                    running_jobs: Mutex::new(Vec::new()),
                 }))
                 .service(index),
         )
@@ -233,11 +171,11 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(State {
-                    counter: Mutex::new(0),
-                    jobcounter: Mutex::new(0),
+                    counter_workers: Mutex::new(0),
+                    counter_jobs: Mutex::new(0),
                     workers: Mutex::new(Vec::new()),
+                    new_jobs: Mutex::new(Vec::new()),
                     jobs: Mutex::new(Vec::new()),
-                    running_jobs: Mutex::new(Vec::new()),
                 }))
                 .service(register),
         )
@@ -253,15 +191,15 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(State {
-                    counter: Mutex::new(0),
-                    jobcounter: Mutex::new(0),
+                    counter_workers: Mutex::new(0),
+                    counter_jobs: Mutex::new(0),
                     workers: Mutex::new(Vec::new()),
-                    jobs: Mutex::new(vec![Job {
+                    new_jobs: Mutex::new(vec![Job {
                         id: 0,
                         cmd: cmd.clone(),
                         status: Status::Submitted,
                     }]),
-                    running_jobs: Mutex::new(Vec::new()),
+                    jobs: Mutex::new(Vec::new()),
                 }))
                 .service(fetch),
         )
@@ -275,9 +213,9 @@ mod tests {
             FetchResponse::StopWorking => {
                 panic!("did not expect FetchResponse::NotWorking")
             }
-            FetchResponse::Jobs(jobs) => {
-                assert_eq!(jobs[0].id, 0);
-                assert_eq!(jobs[0].cmd, cmd);
+            FetchResponse::Jobs(new_jobs) => {
+                assert_eq!(new_jobs[0].id, 0);
+                assert_eq!(new_jobs[0].cmd, cmd);
             }
         }
     }
@@ -288,11 +226,11 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(State {
-                    counter: Mutex::new(0),
-                    jobcounter: Mutex::new(0),
+                    counter_workers: Mutex::new(0),
+                    counter_jobs: Mutex::new(0),
                     workers: Mutex::new(Vec::new()),
-                    jobs: Mutex::new(Vec::new()),
-                    running_jobs: Mutex::new(vec![Job {
+                    new_jobs: Mutex::new(Vec::new()),
+                    jobs: Mutex::new(vec![Job {
                         id: 1,
                         cmd: cmd.clone(),
                         status: Status::Running,
@@ -314,11 +252,11 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(State {
-                    counter: Mutex::new(0),
-                    jobcounter: Mutex::new(0),
+                    counter_workers: Mutex::new(0),
+                    counter_jobs: Mutex::new(0),
                     workers: Mutex::new(Vec::new()),
+                    new_jobs: Mutex::new(Vec::new()),
                     jobs: Mutex::new(Vec::new()),
-                    running_jobs: Mutex::new(Vec::new()),
                 }))
                 .service(update),
         )
@@ -340,11 +278,11 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(web::Data::new(State {
-                    counter: Mutex::new(0),
-                    jobcounter: Mutex::new(0),
+                    counter_workers: Mutex::new(0),
+                    counter_jobs: Mutex::new(0),
                     workers: Mutex::new(Vec::new()),
+                    new_jobs: Mutex::new(Vec::new()),
                     jobs: Mutex::new(Vec::new()),
-                    running_jobs: Mutex::new(Vec::new()),
                 }))
                 .service(submit),
         )
