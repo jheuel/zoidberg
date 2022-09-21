@@ -8,7 +8,9 @@ use env_logger::Env;
 use futures::future::{err, ok, Ready};
 use log;
 use std::sync::Mutex;
-use zoidberg_lib::types::{FetchResponse, Job, RegisterResponse, StatusRequest, Update, Worker};
+use zoidberg_lib::types::{
+    FetchResponse, Heartbeat, Job, RegisterResponse, StatusRequest, Update, Worker,
+};
 
 mod webpage;
 
@@ -44,7 +46,6 @@ impl FromRequest for Authorization {
         if let Some(head) = req.headers().get("cookie") {
             if let Ok(cookie) = head.to_str() {
                 if let Some(secret) = req.app_data::<String>() {
-                    println!("{} == {}", secret, cookie);
                     if secret == cookie {
                         return ok(Authorization {});
                     } else {
@@ -131,6 +132,12 @@ async fn update(
     Ok(format!("Worker updated {} job(s)", n))
 }
 
+#[post("/heartbeat")]
+async fn heartbeat(heartbeat: web::Json<Heartbeat>, _: Authorization) -> Result<String> {
+    log::info!("Heartbeat from worker {}", heartbeat.id);
+    Ok(format!("Heartbeat from worker {}", heartbeat.id))
+}
+
 #[post("/submit")]
 async fn submit(
     data: web::Data<State>,
@@ -163,7 +170,7 @@ async fn main() -> std::io::Result<()> {
     env_logger::Builder::from_env(Env::default().default_filter_or("zoidberg_server=info")).init();
 
     let secret = std::env::var("ZOIDBERG_SECRET").unwrap_or_else(|_| {
-        println!("Please set the $ZOIDBERG_SECRET environment variable");
+        eprintln!("Please set the $ZOIDBERG_SECRET environment variable");
         std::process::exit(1);
     });
 
@@ -184,6 +191,7 @@ async fn main() -> std::io::Result<()> {
             .service(fetch)
             .service(status)
             .service(update)
+            .service(heartbeat)
             .service(submit)
     })
     .bind(("127.0.0.1", 8080))?

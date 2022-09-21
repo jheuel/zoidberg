@@ -75,3 +75,9 @@ pub struct Worker {
     #[serde(default)]
     pub id: i32,
 }
+
+#[derive(Serialize, Deserialize)]
+pub struct Heartbeat {
+    #[serde(default)]
+    pub id: i32,
+}
