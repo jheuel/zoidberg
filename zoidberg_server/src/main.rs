@@ -272,7 +272,7 @@ mod tests {
             .uri("/register")
             .to_request();
         let resp: RegisterResponse = test::call_and_read_body_json(&app, req).await;
-        assert_eq!(resp.id, 1);
+        assert!(resp.id.len() > 0);
     }
 
     #[actix_web::test]
@@ -282,9 +282,11 @@ mod tests {
             App::new()
                 .app_data(String::from("secret"))
                 .app_data(web::Data::new(State {
-                    counter_workers: Mutex::new(0),
                     counter_jobs: Mutex::new(0),
-                    workers: Mutex::new(Vec::new()),
+                    workers: Mutex::new(vec![Worker {
+                        id: "some_worker".to_string(),
+                        last_heartbeat: None,
+                    }]),
                     new_jobs: Mutex::new(vec![Job {
                         id: 0,
                         cmd: cmd.clone(),
@@ -295,8 +297,11 @@ mod tests {
                 .service(fetch),
         )
         .await;
-        let req = test::TestRequest::get()
+        let req = test::TestRequest::post()
             .append_header(("cookie", "secret"))
+            .set_json(FetchRequest {
+                worker_id: "some_worker".to_string(),
+            })
             .uri("/fetch")
             .to_request();
         let resp: FetchResponse = test::call_and_read_body_json(&app, req).await;
@@ -321,14 +326,13 @@ mod tests {
             App::new()
                 .app_data(String::from("secret"))
                 .app_data(web::Data::new(State {
-                    counter_workers: Mutex::new(0),
                     counter_jobs: Mutex::new(0),
                     workers: Mutex::new(Vec::new()),
                     new_jobs: Mutex::new(Vec::new()),
                     jobs: Mutex::new(vec![Job {
                         id: 1,
                         cmd: cmd.clone(),
-                        status: Status::Running(0),
+                        status: Status::Submitted,
                     }]),
                 }))
                 .service(status),
@@ -355,9 +359,9 @@ mod tests {
         let req = test::TestRequest::post()
             .append_header(("cookie", "secret"))
             .set_json(vec![Update {
-                worker: 0,
+                worker: "some_worker".to_string(),
                 job: 0,
-                status: Status::Running(0),
+                status: Status::Submitted,
             }])
             .uri("/update")
             .to_request();
@@ -379,7 +383,7 @@ mod tests {
             .set_json(vec![Job {
                 id: 0,
                 cmd: String::from("hi"),
-                status: Status::Running(0),
+                status: Status::Submitted,
             }])
             .uri("/submit")
             .to_request();
