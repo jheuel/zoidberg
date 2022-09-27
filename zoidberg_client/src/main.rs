@@ -9,7 +9,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::{process::Command, time};
 
-use zoidberg_lib::types::{FetchResponse, Heartbeat, Job, RegisterResponse, Status, Update};
+use zoidberg_lib::types::{
+    FetchRequest, FetchResponse, Heartbeat, Job, RegisterResponse, Status, Update,
+};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -32,7 +34,7 @@ fn build_client(secret: &str) -> Client {
 
 #[derive(Debug, Clone)]
 struct Worker {
-    id: i32,
+    id: String,
     secret: String,
     server: String,
 }
@@ -48,17 +50,17 @@ impl Worker {
         let r: RegisterResponse = serde_json::from_str(&body)?;
         log::info!("registered worker with id: {}", &r.id);
         Ok(Worker {
-            id: r.id,
+            id: r.id.to_string(),
             secret: secret.to_string(),
             server: server.to_string(),
         })
     }
 
-    async fn update(self: &Self, jobs: &[Job]) -> Result<(), Box<dyn Error>> {
+    async fn update(&self, jobs: &[Job]) -> Result<(), Box<dyn Error>> {
         let updates: Vec<Update> = jobs
             .iter()
             .map(|job| Update {
-                worker: self.id,
+                worker: self.id.clone(),
                 job: job.id,
                 status: job.status.clone(),
             })
@@ -76,9 +78,12 @@ impl Worker {
         Ok(())
     }
 
-    async fn fetch(self: &Self) -> Result<FetchResponse, Box<dyn Error>> {
+    async fn fetch(&self) -> Result<FetchResponse, Box<dyn Error>> {
         let res = build_client(&self.secret)
-            .get(format!("{}/fetch", self.server))
+            .post(format!("{}/fetch", self.server))
+            .json(&FetchRequest {
+                worker_id: self.id.clone(),
+            })
             .send()
             .await?;
         let body = res.text().await?;
@@ -86,10 +91,12 @@ impl Worker {
         Ok(resp)
     }
 
-    async fn heartbeat(self: &Self) {
+    async fn heartbeat(&self) {
         let _ = build_client(&self.secret)
             .post(format!("{}/heartbeat", self.server))
-            .json(&Heartbeat { id: self.id })
+            .json(&Heartbeat {
+                id: self.id.clone(),
+            })
             .send()
             .await;
     }
@@ -143,35 +150,46 @@ async fn main() -> Result<(), Box<dyn Error>> {
     );
 
     let pause = time::Duration::from_secs(1);
-    let long_pause = time::Duration::from_secs(20);
+    let long_pause = time::Duration::from_secs(40);
     let heartbeat_pause = time::Duration::from_secs(30);
 
+    let (heartbeat_handle, abort_registration) = AbortHandle::new_pair();
+    let c = Arc::clone(&client);
+    tokio::spawn(Abortable::new(
+        async move {
+            loop {
+                time::sleep(heartbeat_pause).await;
+                c.heartbeat().await;
+            }
+        },
+        abort_registration,
+    ));
+
+    let mut fail_counter = 0;
     loop {
         let jobs = if let Ok(fetch) = client.fetch().await {
+            fail_counter = 0;
             match fetch {
                 FetchResponse::Nop => {
                     time::sleep(pause).await;
                     continue;
                 }
-                FetchResponse::StopWorking => break,
+                FetchResponse::Terminate(m) => {
+                    println!("Terminate worker: {}", m);
+                    break;
+                }
                 FetchResponse::Jobs(jobs) => jobs,
             }
         } else {
+            fail_counter += 1;
+            if fail_counter == 3 {
+                log::error!("failed to fetch three times, assume that server crashed and exit");
+                std::process::exit(1);
+            }
+            log::error!("failed to fetch new jobs");
             time::sleep(long_pause).await;
             continue;
         };
-
-        let (abort_handle, abort_registration) = AbortHandle::new_pair();
-        let c = Arc::clone(&client);
-        tokio::spawn(Abortable::new(
-            async move {
-                loop {
-                    time::sleep(heartbeat_pause).await;
-                    c.heartbeat().await;
-                }
-            },
-            abort_registration,
-        ));
 
         for job in jobs {
             let status = match run(&job).await {
@@ -186,7 +204,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 log::info!("Could not update job: {}", error);
             }
         }
-        abort_handle.abort();
     }
+    heartbeat_handle.abort();
     Ok(())
 }

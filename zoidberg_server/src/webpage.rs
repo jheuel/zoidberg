@@ -1,3 +1,4 @@
+use chrono::Utc;
 use zoidberg_lib::types::{Job, Worker};
 
 // TODO: write nicer frontend
@@ -17,10 +18,17 @@ pub fn render(jobs: &[Job], workers: &[Worker]) -> String {
         + "</tbody></table>";
 
     let workers_html: String = String::from("<table class=\"table is-hoverable\">")
-        + "<thead><tr><th><td>ID</td></th></tr></thead><tbody>"
+        + "<thead><tr><th><td>ID</td><td>last heartbeat</td></th></tr></thead><tbody>"
         + &workers
             .iter()
-            .map(|w| format!("<tr><th></th><td>{}</td></tr>", w.id))
+            .map(|w| {
+                let ts = if let Some(ts) = w.last_heartbeat {
+                    format!("{}", Utc::now().timestamp() - ts)
+                } else {
+                    String::from("")
+                };
+                format!("<tr><th></th><td>{}</td><td>{}</td></tr>", w.id, ts)
+            })
             .collect::<Vec<String>>()
             .join("\n")
         + "</tbody></table>";
@@ -43,7 +51,8 @@ pub fn render(jobs: &[Job], workers: &[Worker]) -> String {
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Hello Bulma!</title>
+    <title>Zoidberg</title>
+    <link rel="icon" href="data:,">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
     {}
   </head>

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
 pub struct Update {
-    pub worker: i32,
+    pub worker: String,
     pub job: i32,
     pub status: Status,
 }
@@ -12,7 +12,7 @@ pub struct Update {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum Status {
     Submitted,
-    Running,
+    Running(String),
     Completed,
     Failed,
 }
@@ -27,7 +27,7 @@ impl fmt::Display for Status {
     fn fmt(self: &Self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Status::Submitted => write!(f, "submitted"),
-            Status::Running => write!(f, "running"),
+            Status::Running(w) => write!(f, "running on worker {}", w),
             Status::Completed => write!(f, "completed"),
             Status::Failed => write!(f, "failed"),
         }
@@ -55,13 +55,18 @@ pub struct Node {
 
 #[derive(Serialize, Deserialize)]
 pub struct RegisterResponse {
-    pub id: i32,
+    pub id: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct FetchRequest {
+    pub worker_id: String,
 }
 
 #[derive(Serialize, Deserialize)]
 pub enum FetchResponse {
     Jobs(Vec<Job>),
-    StopWorking,
+    Terminate(String),
     Nop,
 }
 
@@ -73,11 +78,13 @@ pub struct Submit {
 #[derive(Serialize, Deserialize)]
 pub struct Worker {
     #[serde(default)]
-    pub id: i32,
+    pub id: String,
+    #[serde(default)]
+    pub last_heartbeat: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct Heartbeat {
     #[serde(default)]
-    pub id: i32,
+    pub id: String,
 }
