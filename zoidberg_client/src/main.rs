@@ -16,7 +16,7 @@ use zoidberg_lib::types::{
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn build_client(secret: &str) -> Client {
-    let cookie = format!("{}", secret);
+    let cookie = secret.to_string();
 
     let mut headers = header::HeaderMap::new();
     headers.insert(
@@ -50,7 +50,7 @@ impl Worker {
         let r: RegisterResponse = serde_json::from_str(&body)?;
         log::info!("registered worker with id: {}", &r.id);
         Ok(Worker {
-            id: r.id.to_string(),
+            id: r.id,
             secret: secret.to_string(),
             server: server.to_string(),
         })
@@ -129,7 +129,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let matches = App::new("Zoidberg client")
         .version(VERSION)
-        .author("Johannes Heuel")
+        .author("by Johannes Heuel")
         .arg(
             Arg::with_name("server")
                 .takes_value(true)

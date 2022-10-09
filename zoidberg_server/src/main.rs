@@ -1,13 +1,9 @@
-use actix_web::error::ErrorBadRequest;
 use actix_web::{
-    dev, get, middleware::Logger, post, web, App, Error, FromRequest, HttpRequest, HttpResponse,
-    HttpServer, Responder, Result,
+    get, middleware::Logger, post, web, App, HttpResponse, HttpServer, Responder, Result,
 };
 use chrono::Utc;
-use clap;
 use env_logger::Env;
-use futures::future::{err, ok, Ready};
-use log;
+
 use std::sync::Mutex;
 use std::time::Duration;
 use uuid::Uuid;
@@ -16,7 +12,10 @@ use zoidberg_lib::types::{
     Worker,
 };
 
+mod auth;
 mod webpage;
+
+use auth::Authorization;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -35,28 +34,6 @@ impl State {
             new_jobs: Mutex::new(Vec::new()),
             jobs: Mutex::new(Vec::new()),
         }
-    }
-}
-
-struct Authorization {}
-
-impl FromRequest for Authorization {
-    type Error = Error;
-    type Future = Ready<Result<Self, Self::Error>>;
-
-    fn from_request(req: &HttpRequest, _payload: &mut dev::Payload) -> Self::Future {
-        if let Some(head) = req.headers().get("cookie") {
-            if let Ok(cookie) = head.to_str() {
-                if let Some(secret) = req.app_data::<String>() {
-                    if secret == cookie {
-                        return ok(Authorization {});
-                    } else {
-                        return err(ErrorBadRequest("no auth"));
-                    }
-                }
-            }
-        }
-        err(ErrorBadRequest("no auth"))
     }
 }
 
@@ -204,7 +181,7 @@ async fn main() -> std::io::Result<()> {
 
     let _matches = clap::App::new("Zoidberg server")
         .version(VERSION)
-        .author("Johannes Heuel")
+        .author("by Johannes Heuel")
         .get_matches();
 
     let state = web::Data::new(State::new());
@@ -272,12 +249,13 @@ mod tests {
             .uri("/register")
             .to_request();
         let resp: RegisterResponse = test::call_and_read_body_json(&app, req).await;
-        assert!(resp.id.len() > 0);
+        assert!(!resp.id.is_empty());
     }
 
     #[actix_web::test]
     async fn test_fetch() {
         let cmd = String::from("hi");
+        let jobid = 11;
         let app = test::init_service(
             App::new()
                 .app_data(String::from("secret"))
@@ -288,7 +266,7 @@ mod tests {
                         last_heartbeat: None,
                     }]),
                     new_jobs: Mutex::new(vec![Job {
-                        id: 0,
+                        id: jobid,
                         cmd: cmd.clone(),
                         status: Status::Submitted,
                     }]),
@@ -313,7 +291,7 @@ mod tests {
                 panic!("did not expect FetchResponse::Terminate from worker {}", w)
             }
             FetchResponse::Jobs(new_jobs) => {
-                assert_eq!(new_jobs[0].id, 0);
+                assert_eq!(new_jobs[0].id, jobid);
                 assert_eq!(new_jobs[0].cmd, cmd);
             }
         }
@@ -322,6 +300,7 @@ mod tests {
     #[actix_web::test]
     async fn test_status() {
         let cmd = String::from("hi");
+        let jobid = 1;
         let app = test::init_service(
             App::new()
                 .app_data(String::from("secret"))
@@ -330,7 +309,7 @@ mod tests {
                     workers: Mutex::new(Vec::new()),
                     new_jobs: Mutex::new(Vec::new()),
                     jobs: Mutex::new(vec![Job {
-                        id: 1,
+                        id: jobid,
                         cmd: cmd.clone(),
                         status: Status::Submitted,
                     }]),
@@ -340,11 +319,11 @@ mod tests {
         .await;
         let req = test::TestRequest::post()
             .append_header(("cookie", "secret"))
-            .set_json(vec![StatusRequest { id: 1 }])
+            .set_json(vec![StatusRequest { id: jobid }])
             .uri("/status")
             .to_request();
         let resp: Vec<Job> = test::call_and_read_body_json(&app, req).await;
-        assert_eq!(resp[0].id, 1);
+        assert_eq!(resp[0].id, jobid);
     }
 
     #[actix_web::test]
