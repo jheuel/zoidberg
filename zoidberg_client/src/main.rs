@@ -1,4 +1,4 @@
-use clap::{App, Arg};
+use clap::{arg, value_parser, App, Arg};
 use env_logger::Env;
 use futures::future::{AbortHandle, Abortable};
 use log;
@@ -37,10 +37,11 @@ struct Worker {
     id: String,
     secret: String,
     server: String,
+    threads: i32,
 }
 
 impl Worker {
-    async fn new(server: &str, secret: &str) -> Result<Worker, Box<dyn Error>> {
+    async fn new(server: &str, secret: &str, threads: i32) -> Result<Worker, Box<dyn Error>> {
         let res = build_client(secret)
             .get(format!("{}/register", server))
             .send()
@@ -53,6 +54,7 @@ impl Worker {
             id: r.id,
             secret: secret.to_string(),
             server: server.to_string(),
+            threads,
         })
     }
 
@@ -83,6 +85,7 @@ impl Worker {
             .post(format!("{}/fetch", self.server))
             .json(&FetchRequest {
                 worker_id: self.id.clone(),
+                threads: self.threads,
             })
             .send()
             .await?;
@@ -136,15 +139,26 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 .required(true)
                 .help("Set Zoidberg server address"),
         )
+        .arg(
+            arg!(-j --threads <VALUE> "Sets number of threads")
+                .required(false)
+                .value_parser(value_parser!(i32)),
+        )
         .get_matches();
     let server = matches.value_of("server").unwrap();
+    let threads: i32 = if let Some(t) = matches.get_one::<i32>("threads") {
+        *t
+    } else {
+        1
+    };
+
     let secret = std::env::var("ZOIDBERG_SECRET").unwrap_or_else(|_| {
         eprintln!("Please set the $ZOIDBERG_SECRET environment variable");
         std::process::exit(1);
     });
 
     let client = Arc::new(
-        Worker::new(server, &secret)
+        Worker::new(server, &secret, threads)
             .await
             .expect("Could not create client"),
     );

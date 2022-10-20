@@ -64,7 +64,9 @@ async fn fetch(
     f: web::Json<FetchRequest>,
     _: Authorization,
 ) -> Result<impl Responder> {
-    let requesting_worker = f.into_inner().worker_id;
+    let f = f.into_inner();
+    let requesting_worker = f.worker_id;
+    let threads = f.threads;
     {
         let workers = data.workers.lock().unwrap();
         if workers.iter().filter(|w| w.id == requesting_worker).count() != 1 {
@@ -74,15 +76,24 @@ async fn fetch(
         }
     }
     let mut new_jobs = data.new_jobs.lock().unwrap();
-    if let Some(j) = new_jobs.pop() {
+    new_jobs.sort_by(|a, b| b.threads.cmp(&a.threads));
+
+    if let Some(j) = new_jobs
+        .iter()
+        .filter(|x| x.threads <= threads)
+        .cloned()
+        .collect::<Vec<Job>>()
+        .first()
+    {
         let mut jobs = data.jobs.lock().unwrap();
         for cj in jobs.iter_mut() {
             if cj.id == j.id {
                 cj.status = Status::Running(requesting_worker.clone())
             }
         }
-        return Ok(web::Json(FetchResponse::Jobs(vec![j])));
-    }
+        new_jobs.retain(|x| x.id != j.id);
+        return Ok(web::Json(FetchResponse::Jobs(vec![j.clone()])));
+    };
     Ok(web::Json(FetchResponse::Nop))
 }
 
@@ -277,11 +288,26 @@ mod tests {
                         id: "some_worker".to_string(),
                         last_heartbeat: None,
                     }]),
-                    new_jobs: Mutex::new(vec![Job {
-                        id: jobid,
-                        cmd: cmd.clone(),
-                        status: Status::Submitted,
-                    }]),
+                    new_jobs: Mutex::new(vec![
+                        Job {
+                            id: jobid,
+                            cmd: cmd.clone(),
+                            status: Status::Submitted,
+                            threads: 1,
+                        },
+                        Job {
+                            id: jobid + 1,
+                            cmd: cmd.clone(),
+                            status: Status::Submitted,
+                            threads: 2,
+                        },
+                        Job {
+                            id: jobid + 2,
+                            cmd: cmd.clone(),
+                            status: Status::Submitted,
+                            threads: 3,
+                        },
+                    ]),
                     jobs: Mutex::new(Vec::new()),
                 }))
                 .service(fetch),
@@ -291,6 +317,7 @@ mod tests {
             .append_header(("cookie", "secret"))
             .set_json(FetchRequest {
                 worker_id: "some_worker".to_string(),
+                threads: 1,
             })
             .uri("/fetch")
             .to_request();
@@ -324,6 +351,7 @@ mod tests {
                         id: jobid,
                         cmd: cmd.clone(),
                         status: Status::Submitted,
+                        threads: 1,
                     }]),
                 }))
                 .service(status),
@@ -375,6 +403,7 @@ mod tests {
                 id: 0,
                 cmd: String::from("hi"),
                 status: Status::Submitted,
+                threads: 1,
             }])
             .uri("/submit")
             .to_request();

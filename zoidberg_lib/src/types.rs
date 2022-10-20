@@ -46,6 +46,8 @@ pub struct Job {
     pub cmd: String,
     #[serde(default = "Status::default")]
     pub status: Status,
+    #[serde(default)]
+    pub threads: i32,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -61,6 +63,8 @@ pub struct RegisterResponse {
 #[derive(Serialize, Deserialize)]
 pub struct FetchRequest {
     pub worker_id: String,
+    #[serde(default)]
+    pub threads: i32,
 }
 
 #[derive(Serialize, Deserialize)]
