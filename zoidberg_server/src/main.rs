@@ -40,8 +40,8 @@ impl State {
 #[get("/")]
 async fn index(data: web::Data<State>) -> impl Responder {
     let workers = data.workers.lock().unwrap();
-    let new_jobs = data.new_jobs.lock().unwrap();
-    let page = webpage::render(&*new_jobs, &*workers);
+    let jobs = data.jobs.lock().unwrap();
+    let page = webpage::render(&*jobs, &*workers);
     HttpResponse::Ok().body(page)
 }
 
@@ -133,7 +133,7 @@ async fn heartbeat(
     data: web::Data<State>,
     _: Authorization,
 ) -> Result<String> {
-    log::info!("Heartbeat from worker {}", heartbeat.id);
+    log::debug!("Heartbeat from worker {}", heartbeat.id);
     let mut workers = data.workers.lock().unwrap();
     for w in workers.iter_mut() {
         if w.id == heartbeat.id {
@@ -190,11 +190,23 @@ async fn main() -> std::io::Result<()> {
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(10)).await;
-            let mut workers = s.workers.lock().unwrap();
-            workers.retain(|w| match w.last_heartbeat {
-                None => true,
-                Some(t) => Utc::now().timestamp() - t < 60,
-            })
+            {
+                let mut workers = s.workers.lock().unwrap();
+                workers.retain(|w| match w.last_heartbeat {
+                    None => true,
+                    Some(t) => Utc::now().timestamp() - t < 60,
+                })
+            }
+            let workers = s.workers.lock().unwrap();
+            let mut jobs = s.jobs.lock().unwrap();
+            for job in jobs.iter_mut() {
+                if let Status::Running(w) = &job.status {
+                    let exists = workers.iter().filter(|x| &x.id == w).count() > 0;
+                    if !exists {
+                        job.status = Status::Failed;
+                    }
+                }
+            }
         }
     });
 
@@ -211,7 +223,7 @@ async fn main() -> std::io::Result<()> {
             .service(heartbeat)
             .service(submit)
     })
-    .bind(("127.0.0.1", 8080))?
+    .bind(("0.0.0.0", 8080))?
     .run()
     .await
 }
