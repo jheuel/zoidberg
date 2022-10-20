@@ -4,12 +4,12 @@ use zoidberg_lib::types::{Job, Worker};
 // TODO: write nicer frontend
 pub fn render(jobs: &[Job], workers: &[Worker]) -> String {
     let jobs_html: String = String::from("<table class=\"table is-hoverable\">")
-        + "<thead><tr><th><td>ID</td><td>command</td><td>status</td></th></tr></thead><tbody>"
+        + "<thead><tr><th>ID</th><th style=\"width: 150px;\">command</th><th>status</th></tr></thead><tbody>"
         + &jobs
             .iter()
             .map(|j| {
                 format!(
-                    "<tr><th></th><td>{}</td><td>{}</td><td>{}</td></tr>",
+                    "<tr><td>{}</td><td>{}</td><td>{}</td></tr>",
                     j.id, j.cmd, j.status
                 )
             })
@@ -18,7 +18,7 @@ pub fn render(jobs: &[Job], workers: &[Worker]) -> String {
         + "</tbody></table>";
 
     let workers_html: String = String::from("<table class=\"table is-hoverable\">")
-        + "<thead><tr><th><td>ID</td><td>last heartbeat</td></th></tr></thead><tbody>"
+        + "<thead><tr><th>ID</th><th>last heartbeat</th></tr></thead><tbody>"
         + &workers
             .iter()
             .map(|w| {
@@ -27,11 +27,18 @@ pub fn render(jobs: &[Job], workers: &[Worker]) -> String {
                 } else {
                     String::from("")
                 };
-                format!("<tr><th></th><td>{}</td><td>{}</td></tr>", w.id, ts)
+                format!("<tr><td>{}</td><td>{}</td></tr>", w.id, ts)
             })
             .collect::<Vec<String>>()
             .join("\n")
         + "</tbody></table>";
+
+    let style = r#"<style>
+      td {
+        max-width: 40vw;
+        word-wrap: break-word;
+      }
+    </style>"#;
 
     let _debug_html = r#"<style>
       *:not(path):not(g) {{
@@ -55,6 +62,7 @@ pub fn render(jobs: &[Job], workers: &[Worker]) -> String {
     <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2016%2016'%3E%3Ctext%20x='0'%20y='14'%3E🦀%3C/text%3E%3C/svg%3E" type="image/svg+xml" />
 
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    {}
     {}
   </head>
   <body>
@@ -83,7 +91,7 @@ pub fn render(jobs: &[Job], workers: &[Worker]) -> String {
   </body>
 </html>
 "#,
-        _debug_html, jobs_html, workers_html
+        style, _debug_html, jobs_html, workers_html
     );
     page
 }
