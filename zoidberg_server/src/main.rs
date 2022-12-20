@@ -41,7 +41,13 @@ impl State {
 async fn index(data: web::Data<State>) -> impl Responder {
     let workers = data.workers.lock().unwrap();
     let jobs = data.jobs.lock().unwrap();
-    let page = webpage::render(&*jobs, &*workers);
+    let filtered_jobs: Vec<Job> = jobs
+        .to_vec()
+        .iter()
+        .filter(|x| !matches!(x.status, Status::Completed))
+        .cloned()
+        .collect();
+    let page = webpage::render(&filtered_jobs, &*workers);
     HttpResponse::Ok().body(page)
 }
 

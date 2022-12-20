@@ -136,7 +136,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .arg(
             Arg::with_name("server")
                 .takes_value(true)
-                .required(true)
                 .help("Set Zoidberg server address"),
         )
         .arg(
@@ -145,7 +144,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 .value_parser(value_parser!(i32)),
         )
         .get_matches();
-    let server = matches.value_of("server").unwrap();
     let threads: i32 = if let Some(t) = matches.get_one::<i32>("threads") {
         *t
     } else {
@@ -157,8 +155,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         std::process::exit(1);
     });
 
+    let server = std::env::var("ZOIDBERG_SERVER").unwrap_or_else(|_| {
+        String::from(matches.value_of("server").unwrap())
+    });
+
     let client = Arc::new(
-        Worker::new(server, &secret, threads)
+        Worker::new(&server, &secret, threads)
             .await
             .expect("Could not create client"),
     );
