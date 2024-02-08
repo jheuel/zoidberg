@@ -155,9 +155,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         std::process::exit(1);
     });
 
-    let server = std::env::var("ZOIDBERG_SERVER").unwrap_or_else(|_| {
-        String::from(matches.value_of("server").unwrap())
-    });
+    let server = std::env::var("ZOIDBERG_SERVER")
+        .unwrap_or_else(|_| String::from(matches.value_of("server").unwrap()));
 
     let client = Arc::new(
         Worker::new(&server, &secret, threads)

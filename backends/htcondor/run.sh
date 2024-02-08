@@ -6,4 +6,3 @@
 # sleep 10
 
 /home/home4/institut_1b/jheuel/repositories/zoidberg/target/release/zoidberg_client
-
